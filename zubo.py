@@ -1,0 +1,192 @@
+from threading import Thread
+import os
+import time
+import datetime
+import glob
+import requests
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+LOCAL_PROVINCE = "天津联通"
+LOCAL_PROVINCE_CHANNELS = [
+    "天津频道",
+    "央视频道",
+    "卫视频道",
+    "付费频道"
+]
+
+def read_config(config_file):
+    print(f"读取设置文件：{config_file}")
+    ip_configs = []
+    try:
+        with open(config_file, 'r') as f:
+            for line_num, line in enumerate(f, 1):
+                if "," in line and not line.startswith("#"):
+                    parts = line.strip().split(',')
+                    ip_part, port = parts[0].strip().split(':')
+                    a, b, c, d = ip_part.split('.')
+                    option = int(parts[1])
+                    url_end = "/status" if option >= 10 else "/stat"
+                    ip = f"{a}.{b}.{c}.1" if option % 2 == 0 else f"{a}.{b}.1.1"
+                    ip_configs.append((ip, port, option, url_end))
+                    print(f"第{line_num}行：http://{ip}:{port}{url_end}添加到扫描列表")
+        return ip_configs
+    except Exception as e:
+        print(f"读取文件错误: {e}")
+
+def generate_ip_ports(ip, port, option):
+    a, b, c, d = ip.split('.')
+    if option == 2 or option == 12:
+        c_extent = c.split('-')
+        c_first = int(c_extent[0]) if len(c_extent) == 2 else int(c)
+        c_last = int(c_extent[1]) + 1 if len(c_extent) == 2 else int(c) + 8
+        return [f"{a}.{b}.{x}.{y}:{port}" for x in range(c_first, c_last) for y in range(1, 256)]
+    elif option == 0 or option == 10:
+        return [f"{a}.{b}.{c}.{y}:{port}" for y in range(1, 256)]
+    else:
+        return [f"{a}.{b}.{x}.{y}:{port}" for x in range(256) for y in range(1, 256)]
+
+def check_ip_port(ip_port, url_end):
+    try:
+        url = f"http://{ip_port}{url_end}"
+        resp = requests.get(url, timeout=2)
+        resp.raise_for_status()
+        if "Multi stream daemon" in resp.text or "udpxy status" in resp.text:
+            print(f"{url} 访问成功")
+            return ip_port
+    except:
+        return None
+
+def scan_ip_port(ip, port, option, url_end):
+    def show_progress():
+        while checked[0] < len(ip_ports) and option % 2 == 1:
+            print(f"已扫描：{checked[0]}/{len(ip_ports)}, 有效ip_port：{len(valid_ip_ports)}个")
+            time.sleep(30)
+    valid_ip_ports = []
+    ip_ports = generate_ip_ports(ip, port, option)
+    checked = [0]
+    Thread(target=show_progress, daemon=True).start()
+    with ThreadPoolExecutor(max_workers = 300 if option % 2 == 1 else 100) as executor:
+        futures = {executor.submit(check_ip_port, ip_port, url_end): ip_port for ip_port in ip_ports}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                valid_ip_ports.append(result)
+            checked[0] += 1
+    return valid_ip_ports
+
+def multicast_province(config_file):
+    filename = os.path.basename(config_file)
+    raw_prefix = filename.split('_')[0]
+    province = raw_prefix[2:]
+    print(f"{'='*25}\n   获取: {province} IP端口\n{'='*25}")
+    configs = sorted(set(read_config(config_file)))
+    print(f"读取完成，共需扫描 {len(configs)}组")
+    all_ip_ports = []
+    for ip, port, option, url_end in configs:
+        print(f"\n开始扫描  http://{ip}:{port}{url_end}")
+        all_ip_ports.extend(scan_ip_port(ip, port, option, url_end))
+    if not all_ip_ports:
+        print(f"\n{province} 扫描完成，未扫描到有效IP端口")
+        return
+    all_ip_ports = sorted(set(all_ip_ports))
+    print(f"\n{province} 扫描完成，获取有效IP端口: {len(all_ip_ports)}个")
+    ip_dir = 'ip'
+    result_file = os.path.join(ip_dir, f"{province}_ip.txt")
+    os.makedirs(ip_dir, exist_ok=True)
+    with open(result_file, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(all_ip_ports))
+    if province == LOCAL_PROVINCE:
+        templates = []
+        for i, channel_type in enumerate(LOCAL_PROVINCE_CHANNELS, 1):
+            template_file = f"template_{channel_type}.txt"
+            templates.append((i, template_file, channel_type))
+        for order, template_name, channel_type in templates:
+            template_file = os.path.join('template', template_name)
+            if not os.path.exists(template_file):
+                print(f"缺少模板文件: {template_file}")
+                continue
+            with open(template_file, 'r', encoding='utf-8') as f:
+                tem_channels = f.read()
+            output = [f"{channel_type},#genre#\n"]
+            with open(result_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    ip = line.strip()
+                    output.append(tem_channels.replace("ipipip", f"{ip}"))
+            output_file = f"local_{order:02d}_{channel_type}.txt"
+            with open(os.path.join('zubo', output_file), 'w', encoding='utf-8') as f:
+                f.writelines(output)
+    else:
+        template_file = os.path.join('template', f"template_{province}.txt")
+        if not os.path.exists(template_file):
+            print(f"缺少模板文件: {template_file}")
+            return
+        with open(template_file, 'r', encoding='utf-8') as f:
+            tem_channels = f.read()
+        output = [f"{province},#genre#\n"]
+        with open(result_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                ip = line.strip()
+                output.append(tem_channels.replace("ipipip", f"{ip}"))
+        with open(os.path.join('zubo', f"{raw_prefix}.txt"), 'w', encoding='utf-8') as f:
+            f.writelines(output)
+
+def txt_to_m3u(input_file, output_file):
+    with open(input_file, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    with open(output_file, 'w', encoding='utf-8') as f:
+        genre = ''
+        for line in lines:
+            line = line.strip()
+            if "," in line:
+                channel_name, channel_url = line.split(',', 1)
+                if channel_url == '#genre#':
+                    genre = channel_name
+                else:
+                    f.write(f'#EXTINF:-1 group-title="{genre}",{channel_name}\n')
+                    f.write(f'{channel_url}\n')
+
+def main():
+    print(f"当前本地省份配置: {LOCAL_PROVINCE}")
+    print(f"本地省份频道类型: {', '.join(LOCAL_PROVINCE_CHANNELS)}")
+    os.makedirs('zubo', exist_ok=True)
+    for file in glob.glob(os.path.join('zubo', '*.txt')):
+        try:
+            os.remove(file)
+        except:
+            pass
+    all_files = glob.glob(os.path.join('ip', '*.txt'))
+    config_files = sorted([
+        f for f in all_files
+        if f.endswith('_config.txt') and
+            re.match(r'^\d', os.path.basename(f))
+    ])
+    print("检测到以下配置文件:")
+    for cf in config_files:
+        print(f" - {os.path.basename(cf)}")
+    for config_file in config_files:
+        multicast_province(config_file)
+    all_files = glob.glob(os.path.join('zubo', '*.txt'))
+    local_files = [f for f in all_files if os.path.basename(f).startswith("local_")]
+    other_files = [f for f in all_files if f not in local_files]
+    local_files_sorted = sorted(local_files, key=lambda x: os.path.basename(x))
+    sorted_files = local_files_sorted + sorted(other_files)
+    file_contents = []
+    for file_path in sorted_files:
+        with open(file_path, 'r', encoding="utf-8") as f:
+            content = f.read()
+            file_contents.append(content.rstrip())
+    now = datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=8)
+    current_time = now.strftime("%Y/%m/%d %H:%M")
+    with open("zubo_all.txt", "w", encoding="utf-8") as f:
+        content = '\n'.join(file_contents)
+        f.write(content)
+        if content:
+            f.write('\n')
+        f.write("更新时间,#genre#\n")
+        f.write(f"{current_time},http://play.jinnantv.top/live/JNTV1.m3u8")
+    txt_to_m3u("zubo_all.txt", "zubo_all.m3u")
+    print(f"组播地址获取完成，共合并 {len(file_contents)} 个文件")
+
+if __name__ == "__main__":
+    main()
