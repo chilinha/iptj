@@ -35,6 +35,7 @@ IPTV5+,http://ipipip/rtp/225.1.1.106:5002
 武术世界,http://ipipip/rtp/225.1.2.129:5002
 快乐垂钓,http://ipipip/rtp/225.1.2.18:5002
 茶频道,http://ipipip/rtp/225.1.2.19:5002
+四海钓鱼,http://ipipip/rtp/225.1.2.117:5002
 发现之旅,http://ipipip/rtp/225.1.1.183:5002
 老故事,http://ipipip/rtp/225.1.1.188:5002
 中学生,http://ipipip/rtp/225.1.1.193:5002
@@ -48,6 +49,4 @@ IPTV足球,http://ipipip/rtp/225.1.1.105:5002
 书画,http://ipipip/rtp/225.1.2.22:5002
 环球旅游,http://ipipip/rtp/225.1.2.200:5002
 生态环境,http://ipipip/rtp/225.1.2.201:5002
-四海钓鱼,http://ipipip/rtp/225.1.2.202:5002
-证券服务,http://ipipip/rtp/225.1.1.72:5002
 财富天下,http://ipipip/rtp/225.1.2.198:5002
